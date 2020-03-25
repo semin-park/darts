@@ -1,3 +1,5 @@
+# nsml: pytorch/pytorch:0.4_cuda9_cudnn7
+
 import os
 import sys
 import time
@@ -17,6 +19,7 @@ from torch.autograd import Variable
 from model_search import Network
 from architect import Architect
 
+import nsml
 
 parser = argparse.ArgumentParser("cifar")
 parser.add_argument('--data', type=str, default='../data', help='location of the data corpus')
@@ -42,6 +45,8 @@ parser.add_argument('--unrolled', action='store_true', default=False, help='use 
 parser.add_argument('--arch_learning_rate', type=float, default=3e-4, help='learning rate for arch encoding')
 parser.add_argument('--arch_weight_decay', type=float, default=1e-3, help='weight decay for arch encoding')
 args = parser.parse_args()
+if args.data == 'nsml':
+    args.data = os.path.join(nsml.DATASET_PATH, 'train')
 
 args.save = 'search-{}-{}'.format(args.save, time.strftime("%Y%m%d-%H%M%S"))
 utils.create_exp_dir(args.save, scripts_to_save=glob.glob('*.py'))
@@ -84,7 +89,7 @@ def main():
             weight_decay=args.weight_decay)
 
     train_transform, valid_transform = utils._data_transforms_cifar10(args)
-    train_data = dset.CIFAR10(root=args.data, train=True, download=True, transform=train_transform)
+    train_data = dset.CIFAR10(root=args.data, train=True, download=False, transform=train_transform)
 
     num_train = len(train_data)
     indices = list(range(num_train))
