@@ -16,13 +16,14 @@ import torchvision.datasets as dset
 import torch.backends.cudnn as cudnn
 
 from torch.autograd import Variable
-from model_search import Network
+from bench201_model_search import SequentialNetwork
+# from model_search import Network
 from architect import Architect
 
 import nsml
 
 parser = argparse.ArgumentParser("cifar")
-parser.add_argument('--data', type=str, default='../data', help='location of the data corpus')
+parser.add_argument('--data', type=str, default='nsml', help='location of the data corpus')
 parser.add_argument('--batch_size', type=int, default=64, help='batch size')
 parser.add_argument('--learning_rate', type=float, default=0.025, help='init learning rate')
 parser.add_argument('--learning_rate_min', type=float, default=0.001, help='min learning rate')
@@ -30,9 +31,9 @@ parser.add_argument('--momentum', type=float, default=0.9, help='momentum')
 parser.add_argument('--weight_decay', type=float, default=3e-4, help='weight decay')
 parser.add_argument('--report_freq', type=float, default=50, help='report frequency')
 parser.add_argument('--gpu', type=int, default=0, help='gpu device id')
-parser.add_argument('--epochs', type=int, default=50, help='num of training epochs')
+parser.add_argument('--epochs', type=int, default=250, help='num of training epochs')
 parser.add_argument('--init_channels', type=int, default=16, help='num of init channels')
-parser.add_argument('--layers', type=int, default=8, help='total number of layers')
+parser.add_argument('--layers', type=int, default=17, help='total number of layers')
 parser.add_argument('--model_path', type=str, default='saved_models', help='path to save the model')
 parser.add_argument('--cutout', action='store_true', default=False, help='use cutout')
 parser.add_argument('--cutout_length', type=int, default=16, help='cutout length')
@@ -61,6 +62,12 @@ logging.getLogger().addHandler(fh)
 
 CIFAR_CLASSES = 10
 
+global_step = 0
+
+def save_fn(dir, model, architect):
+    torch.save(model.state_dict(), os.path.join(dir, 'model.pt'))
+    torch.save(model.alphas, os.path.join(dir, 'alphas.pt'))
+
 
 def main():
     if not torch.cuda.is_available():
@@ -78,7 +85,7 @@ def main():
 
     criterion = nn.CrossEntropyLoss()
     criterion = criterion.cuda()
-    model = Network(args.init_channels, CIFAR_CLASSES, args.layers, criterion)
+    model = SequentialNetwork(args.init_channels, CIFAR_CLASSES, args.layers, criterion)
     model = model.cuda()
     logging.info("param size = %fMB", utils.count_parameters_in_MB(model))
 
@@ -109,30 +116,40 @@ def main():
                 optimizer, float(args.epochs), eta_min=args.learning_rate_min)
 
     architect = Architect(model, args)
+    nsml.bind(model=model, architect=architect, save=save_fn)
 
     for epoch in range(args.epochs):
         scheduler.step()
         lr = scheduler.get_lr()[0]
-        logging.info('epoch %d lr %e', epoch, lr)
+        print(f'Epoch {epoch} lr {lr}')
 
-        genotype = model.genotype()
-        logging.info('genotype = %s', genotype)
+        # genotype = model.genotype()
+        # print('genotype = {genotype}')
 
-        print(F.softmax(model.alphas_normal, dim=-1))
-        print(F.softmax(model.alphas_reduce, dim=-1))
+        print(F.softmax(model.alphas, dim=-1))
 
         # training
         train_acc, train_obj = train(train_queue, valid_queue, model, architect, criterion, optimizer, lr)
-        logging.info('train_acc %f', train_acc)
+        print(f'train_acc {train_acc}')
 
         # validation
         valid_acc, valid_obj = infer(valid_queue, model, criterion)
-        logging.info('valid_acc %f', valid_acc)
+        print(f'valid_acc {valid_acc}')
+        print(train_acc, train_obj, valid_acc, valid_obj)
+        nsml.report(
+            step=epoch,
+            train__acc=train_acc,
+            train__obj=train_obj,
+            valid__acc=valid_acc,
+            valid__obj=valid_obj,
+        )
 
         utils.save(model, os.path.join(args.save, 'weights.pt'))
+        nsml.save(epoch)
 
 
 def train(train_queue, valid_queue, model, architect, criterion, optimizer, lr):
+    global global_step
     objs = utils.AvgrageMeter()
     top1 = utils.AvgrageMeter()
     top5 = utils.AvgrageMeter()
@@ -166,6 +183,14 @@ def train(train_queue, valid_queue, model, architect, criterion, optimizer, lr):
 
         if step % args.report_freq == 0:
             logging.info('train %03d %e %f %f', step, objs.avg, top1.avg, top5.avg)
+            nsml.report(
+                scope=locals(),
+                step=global_step,
+                report__obj=objs.avg,
+                report__top1=top1.avg,
+                report__top5=top5.avg,
+            )
+        global_step += 1
 
     return top1.avg, objs.avg
 
@@ -176,21 +201,22 @@ def infer(valid_queue, model, criterion):
     top5 = utils.AvgrageMeter()
     model.eval()
 
-    for step, (input, target) in enumerate(valid_queue):
-        input = Variable(input, volatile=True).cuda()
-        target = Variable(target, volatile=True).cuda(async=True)
+    with torch.no_grad():
+        for step, (input, target) in enumerate(valid_queue):
+            input = input.cuda()
+            target = target.cuda(async=True)
 
-        logits = model(input)
-        loss = criterion(logits, target)
+            logits = model(input)
+            loss = criterion(logits, target)
 
-        prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))
-        n = input.size(0)
-        objs.update(loss.data[0], n)
-        top1.update(prec1.data[0], n)
-        top5.update(prec5.data[0], n)
+            prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))
+            n = input.size(0)
+            objs.update(loss.item(), n)
+            top1.update(prec1.item(), n)
+            top5.update(prec5.item(), n)
 
-        if step % args.report_freq == 0:
-            logging.info('valid %03d %e %f %f', step, objs.avg, top1.avg, top5.avg)
+            if step % args.report_freq == 0:
+                logging.info('valid %03d %e %f %f', step, objs.avg, top1.avg, top5.avg)
 
     return top1.avg, objs.avg
 

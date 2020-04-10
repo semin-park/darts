@@ -2,6 +2,14 @@ from collections import namedtuple
 
 Genotype = namedtuple('Genotype', 'normal normal_concat reduce reduce_concat')
 
+BENCH201PRIMITIVES = [
+    'none',
+    'skip_connect',
+    'Conv_1x1',
+    'Conv_3x3',
+    'avg_pool_3x3'
+]
+
 PRIMITIVES = [
     'none',
     'max_pool_3x3',

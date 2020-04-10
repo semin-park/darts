@@ -17,6 +17,8 @@ OPS = {
         nn.Conv2d(C, C, (7,1), stride=(stride, 1), padding=(3, 0), bias=False),
         nn.BatchNorm2d(C, affine=affine)
         ),
+    'Conv_1x1': lambda C, stride, affine: ReLUConvBN(C, C, 1, stride, 0, affine=affine),
+    'Conv_3x3': lambda C, stride, affine: ReLUConvBN(C, C, 3, stride, 1, affine=affine),
 }
 
 class ReLUConvBN(nn.Module):
@@ -103,3 +105,37 @@ class FactorizedReduce(nn.Module):
         out = self.bn(out)
         return out
 
+# https://github.com/D-X-Y/NAS-Projects/blob/master/lib/models/cell_operations.py
+class ResNetBasicBlock(nn.Module):
+    def __init__(self, inplanes, planes, stride, affine=True):
+        super(ResNetBasicBlock, self).__init__()
+        assert stride == 1 or stride == 2, 'invalid stride {:}'.format(stride)
+        self.conv_a = ReLUConvBN(inplanes, planes, 3, stride, 1, affine)
+        self.conv_b = ReLUConvBN(  planes, planes, 3,      1, 1, affine)
+        if stride == 2:
+            self.downsample = nn.Sequential(
+                nn.AvgPool2d(kernel_size=2, stride=2, padding=0),
+                nn.Conv2d(inplanes, planes, kernel_size=1, stride=1, padding=0, bias=False)
+            )
+        elif inplanes != planes:
+            self.downsample = ReLUConvBN(inplanes, planes, 1, 1, 0, affine)
+        else:
+            self.downsample = None
+        self.in_dim  = inplanes
+        self.out_dim = planes
+        self.stride  = stride
+        self.num_conv = 2
+
+    def extra_repr(self):
+        string = '{name}(inC={in_dim}, outC={out_dim}, stride={stride})'.format(name=self.__class__.__name__, **self.__dict__)
+        return string
+
+    def forward(self, inputs):
+        basicblock = self.conv_a(inputs)
+        basicblock = self.conv_b(basicblock)
+
+        if self.downsample is not None:
+            residual = self.downsample(inputs)
+        else:
+            residual = inputs
+        return residual + basicblock
