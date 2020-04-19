@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from operations import OPS, ReLUConvBN, Identity, ResNetBasicBlock
+from .operations import OPS, ReLUConvBN, Identity, ResNetBasicBlock
+from .genotypes import BENCH201PRIMITIVES
 from torch.autograd import Variable
-from genotypes import BENCH201PRIMITIVES
 
 
 class MixedOp(nn.Module):

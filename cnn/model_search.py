@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from operations import *
+from .operations import *
 from torch.autograd import Variable
-from genotypes import PRIMITIVES
-from genotypes import Genotype
+from .genotypes import PRIMITIVES
+from .genotypes import Genotype
 
 
 class MixedOp(nn.Module):
@@ -68,6 +68,7 @@ class Network(nn.Module):
         self._criterion = criterion
         self._steps = steps
         self._multiplier = multiplier
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
         C_curr = stem_multiplier*C
         self.stem = nn.Sequential(
@@ -95,7 +96,7 @@ class Network(nn.Module):
         self._initialize_alphas()
 
     def new(self):
-        model_new = Network(self._C, self._num_classes, self._layers, self._criterion).cuda()
+        model_new = Network(self._C, self._num_classes, self._layers, self._criterion).to(self.device)
         for x, y in zip(model_new.arch_parameters(), self.arch_parameters()):
                 x.data.copy_(y.data)
         return model_new
@@ -120,8 +121,8 @@ class Network(nn.Module):
         k = sum(1 for i in range(self._steps) for n in range(2+i))
         num_ops = len(PRIMITIVES)
 
-        self.alphas_normal = Variable(1e-3*torch.randn(k, num_ops).cuda(), requires_grad=True)
-        self.alphas_reduce = Variable(1e-3*torch.randn(k, num_ops).cuda(), requires_grad=True)
+        self.alphas_normal = Variable(1e-3*torch.randn(k, num_ops).to(self.device), requires_grad=True)
+        self.alphas_reduce = Variable(1e-3*torch.randn(k, num_ops).to(self.device), requires_grad=True)
         self._arch_parameters = [
             self.alphas_normal,
             self.alphas_reduce,
